@@ -1,4 +1,4 @@
-# claude-code-halloween
+# halloween
 
 A Claude Code mod that haunts the spinner. While Claude works, a small
 animated Clawd (the size of the welcome screen mascot, 3 rows by 12 columns)
@@ -26,7 +26,7 @@ He also comes as a bigger macOS [screensaver](#screensaver).
 ## Install
 
 ```
-/plugin install halloween --marketplace whirlwin/claude-code-halloween
+/plugin install halloween --marketplace https://themes.whirlwin.io/marketplace.json
 ```
 
 Answer `y` to add the marketplace, then pick a scope.
@@ -37,8 +37,8 @@ Answer `y` to add the marketplace, then pick a scope.
 not fetch it first, so refresh the clone before updating:
 
 ```
-claude plugin marketplace update claude-code-halloween
-claude plugin update halloween@claude-code-halloween
+claude plugin marketplace update claude-themes
+claude plugin update halloween@claude-themes
 ```
 
 Then run `/reload-plugins` in an open session, or restart Claude Code.
@@ -101,7 +101,7 @@ claude plugin validate .
 claude plugin test .
 ```
 
-The plugin is named `halloween` rather than after the repository because
+The plugin is named `halloween` rather than `claude-halloween` because
 Claude Code reserves plugin names starting with `claude-`.
 
 ## License

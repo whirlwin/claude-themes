@@ -3,14 +3,16 @@
 The site and the Claude Code plugin marketplace at
 <https://themes.whirlwin.io>. A theme is a
 [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview)
-that takes over the spinner while Claude works. Each theme is a plugin in its own repo; this
-repo holds the catalog that lists them and the page that shows them.
+that takes over the spinner while Claude works. This repo holds every theme,
+each a plugin in its own folder under `plugins/`, plus the catalog that lists
+them and the page that shows them.
 
-| Theme | Plugin | Repo |
+| Theme | Plugin | Folder |
 | --- | --- | --- |
-| Halloween | `halloween` | [whirlwin/claude-code-halloween](https://github.com/whirlwin/claude-code-halloween) |
-| Hacker News | `hackernews` | [whirlwin/claude-code-hackernews](https://github.com/whirlwin/claude-code-hackernews) |
-| VG | `vg` | [whirlwin/claude-code-vg](https://github.com/whirlwin/claude-code-vg) |
+| Halloween | `halloween` | [plugins/halloween](plugins/halloween) |
+| Christmas | `christmas` | [plugins/christmas](plugins/christmas) |
+| Hacker News | `hackernews` | [plugins/hackernews](plugins/hackernews) |
+| VG | `vg` | [plugins/vg](plugins/vg) |
 
 Install a theme in a Claude Code session:
 
@@ -26,13 +28,15 @@ From a shell, the command is
 
 - Only one theme can draw the spinner at a time. Hide one with its own
   command, such as `/halloween`, or keep it off with
-  `claude plugin disable halloween@whirlwin-themes`.
-- If you installed a theme from its own repo before
-  (`halloween@claude-code-halloween`, `hackernews@claude-code-hackernews`,
-  `vg@claude-code-vg`), uninstall that copy first, for example
-  `claude plugin uninstall halloween@claude-code-halloween`.
-- To update, run `claude plugin marketplace update whirlwin-themes`, then
-  `claude plugin update <theme>@whirlwin-themes`, then `/reload-plugins` in
+  `claude plugin disable halloween@claude-themes`.
+- The marketplace used to be called `whirlwin-themes`, and each theme used to
+  live in a repo of its own (`whirlwin/claude-code-halloween` and so on). If
+  you installed from either, uninstall that copy and remove the old
+  marketplace first, for example
+  `claude plugin uninstall halloween@whirlwin-themes` and
+  `claude plugin marketplace remove whirlwin-themes`, then install again.
+- To update, run `claude plugin marketplace update claude-themes`, then
+  `claude plugin update <theme>@claude-themes`, then `/reload-plugins` in
   an open session.
 - In the desktop app only the spinner's word changes. The tiles, the Clawd
   and the links need the terminal.
@@ -41,6 +45,7 @@ From a shell, the command is
 
 | Path | What it is |
 | --- | --- |
+| `plugins/<name>/` | One theme: a whole Claude Code plugin with its own README, tests and `docs/demo.gif` |
 | `.claude-plugin/marketplace.json` | The catalog, and its only copy in git |
 | `wrangler.jsonc` | The Worker: static assets only, no code, on themes.whirlwin.io |
 | `public/` | The site: plain HTML and CSS, no framework and no build step |
@@ -48,7 +53,7 @@ From a shell, the command is
 | `public/404.html` | Served for any path that has no file |
 | `public/copy.js` | The copy buttons, the only script on the site |
 | `public/_headers` | Security headers for every response, plus the content type, cache and CORS headers for `/marketplace.json` |
-| `public/images/` | Each theme's spinner GIF and its reduced-motion still (cropped from its repo's `docs/demo.gif`), the whirlwin.io wordmark and the grain overlay |
+| `public/images/` | Each theme's spinner GIF and its reduced-motion still (cropped from its plugin's `docs/demo.gif`), the whirlwin.io wordmark and the grain overlay |
 | `public/fonts/` | JetBrains Mono and its license (OFL), served by the site so the CSP allows no other origin |
 | `public/og.png` | The link preview picture, rendered from `og/card.html` |
 | `og/card.html` | The source of `og.png`, not deployed |
@@ -100,6 +105,8 @@ npm run check
 It runs `claude plugin validate .`, then `scripts/check.sh`, which fails when:
 
 - a catalog entry has no card on the page, or a card has no entry
+- a catalog entry's `path` is not a plugin folder whose `plugin.json` has
+  the same `name`
 - a card's code element is not exactly
   `/plugin install <name> --marketplace https://themes.whirlwin.io/marketplace.json`
 - a `src`, `href`, CSS `url()` or `og:image` points at a file that is not in
@@ -122,17 +129,20 @@ with `npx wrangler login`.
 
 ## Add a theme
 
-1. Add an entry to `.claude-plugin/marketplace.json`. Its `name` is the
-   plugin's name from its own `plugin.json`. Give it a `description`, a
-   `homepage`, a `category`, `tags` and a `url` source with the repo's https
-   clone URL. Leave out `version`: the plugin's `plugin.json` already has one,
-   and when both are set `claude plugin validate` warns that they disagree.
-2. Add a card to `public/index.html`. Copy one of the
+1. Put the plugin in `plugins/<name>/`, where `<name>` is the `name` in its
+   own `plugin.json`, with no `marketplace.json` of its own.
+2. Add an entry to `.claude-plugin/marketplace.json` with the same `name`.
+   Give it a `description`, a `homepage` (the folder on GitHub), a
+   `category`, `tags` and a `git-subdir` source with this repo's https clone
+   URL and `path` set to `plugins/<name>`. Leave out `version`: the plugin's
+   `plugin.json` already has one, and when both are set
+   `claude plugin validate` warns that they disagree.
+3. Add a card to `public/index.html`. Copy one of the
    `<article class="card theme ...">` elements and set its `id` to the plugin
    name. A card is the window chrome with the theme's name linking to its
-   repo, the spinner GIF and the install command. The GIF is the top of the
-   repo's `docs/demo.gif`, a real session recording, cropped to the spinner
-   and the first lines under it, 360x88. Run this from the theme repo and
+   folder, the spinner GIF and the install command. The GIF is the top of the
+   plugin's `docs/demo.gif`, a real session recording, cropped to the spinner
+   and the first lines under it, 360x88. Run this from the plugin's folder and
    copy the results into `public/images/` (`brew install gifsicle` if you do
    not have it). The PNG is frame 0, shown to people who prefer reduced
    motion:
@@ -147,19 +157,19 @@ with `npx wrangler login`.
    `shot__frame--cut` to the frame so the right edge fades. Add a `.theme--<name>` rule to `styles.css`
    with its `--accent` color, plus a lighter `--accent-text` if the accent has
    less than 4.5:1 contrast on the dark background.
-3. Run `npm run check`, then `npm run deploy`.
+4. Run `npm run check`, then `npm run deploy`.
 
 People who already added the marketplace see the new theme after
-`claude plugin marketplace update whirlwin-themes`.
+`claude plugin marketplace update claude-themes`.
 
-## Why url sources
+## Why git-subdir sources
 
 People add this marketplace by its URL, and for a marketplace added that way
 Claude Code downloads only `marketplace.json`. A relative source such as
-`./plugins/halloween` has nothing to resolve against, so every entry has to
-name a repository of its own. A `github` source needs a GitHub SSH key, or
-`CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`, to clone. A `url` source with the https
-clone URL of a public repo needs nothing.
+`./plugins/halloween` has nothing to resolve against, so every entry names
+this repo again with a `git-subdir` source, which clones only its own folder
+(a sparse, partial clone). With the https clone URL of a public repo it needs
+no GitHub SSH key.
 
 ## Link preview
 

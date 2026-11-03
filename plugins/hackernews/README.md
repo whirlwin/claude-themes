@@ -1,4 +1,4 @@
-# claude-code-hackernews
+# hackernews
 
 A Claude Code mod that puts the Hacker News front page in the spinner. While
 Claude works, a small orange HN tile takes the spinner's place, beside one of
@@ -24,7 +24,7 @@ cut to fit.
 ## Install
 
 ```
-/plugin install hackernews --marketplace whirlwin/claude-code-hackernews
+/plugin install hackernews --marketplace https://themes.whirlwin.io/marketplace.json
 ```
 
 Answer `y` to add the marketplace, then pick a scope.
@@ -35,8 +35,8 @@ Answer `y` to add the marketplace, then pick a scope.
 not fetch it first, so refresh the clone before updating:
 
 ```
-claude plugin marketplace update claude-code-hackernews
-claude plugin update hackernews@claude-code-hackernews
+claude plugin marketplace update claude-themes
+claude plugin update hackernews@claude-themes
 ```
 
 Then run `/reload-plugins` in an open session, or restart Claude Code.
@@ -53,7 +53,7 @@ Then run `/reload-plugins` in an open session, or restart Claude Code.
 Only one mod can draw its own spinner: with another installed that does, which
 one shows depends on the order the engine runs their hooks in, which it does
 not promise for installed plugins. `/hackernews` hides this one for the
-session; `claude plugin disable hackernews@claude-code-hackernews` keeps it off.
+session; `claude plugin disable hackernews@claude-themes` keeps it off.
 
 The [spotify](https://github.com/whirlwin/claude-code-spotify) mod puts the
 song after the spinner's word, and the story takes the place of that word, so
@@ -97,7 +97,7 @@ node docs/preview.mjs docs/preview.png
 The preview script needs Node 22.18 or later, to import `hooks/logo.ts`
 without a compile step.
 
-The plugin is named `hackernews` rather than after the repository because
+The plugin is named `hackernews` rather than `claude-hackernews` because
 Claude Code reserves plugin names starting with `claude-`. It is not
 affiliated with Y Combinator or Hacker News.
 

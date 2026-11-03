@@ -1,4 +1,4 @@
-# claude-code-vg
+# vg
 
 A Claude Code mod that puts the newest VG articles in the spinner. While
 Claude works, a small red VG tile takes the spinner's place, beside one of the
@@ -24,21 +24,10 @@ cut to fit.
 ## Install
 
 ```
-/plugin install vg --marketplace whirlwin/claude-code-vg
+/plugin install vg --marketplace https://themes.whirlwin.io/marketplace.json
 ```
 
 Answer `y` to add the marketplace, then pick a scope.
-
-The three themes, Halloween, Hacker News and VG, are also listed together at
-[themes.whirlwin.io](https://themes.whirlwin.io), where this mod installs as
-`vg@whirlwin-themes`:
-
-```
-/plugin marketplace add https://themes.whirlwin.io/marketplace.json
-/plugin install vg@whirlwin-themes
-```
-
-Install it from one marketplace or the other, not both.
 
 ## Update
 
@@ -46,12 +35,11 @@ Install it from one marketplace or the other, not both.
 not fetch it first, so refresh the clone before updating:
 
 ```
-claude plugin marketplace update claude-code-vg
-claude plugin update vg@claude-code-vg
+claude plugin marketplace update claude-themes
+claude plugin update vg@claude-themes
 ```
 
-Installed from themes.whirlwin.io, it is `whirlwin-themes` in place of
-`claude-code-vg` in both. Then run `/reload-plugins` in an open session, or
+Then run `/reload-plugins` in an open session, or
 restart Claude Code.
 
 ## Use
@@ -63,14 +51,12 @@ restart Claude Code.
 
 ## With other mods
 
-Only one mod can draw its own spinner, and the
-[halloween](https://github.com/whirlwin/claude-code-halloween) and
-[hackernews](https://github.com/whirlwin/claude-code-hackernews) mods draw
+Only one mod can draw its own spinner, and the other themes in this repo,
+such as [halloween](../halloween) and [hackernews](../hackernews), draw
 theirs too. With one of them installed, which one shows depends on the order
 the engine runs their hooks in, which it does not promise for installed
 plugins. `/vg` hides this one for the session;
-`claude plugin disable vg@claude-code-vg` (or `vg@whirlwin-themes`) keeps it
-off.
+`claude plugin disable vg@claude-themes` keeps it off.
 
 The [spotify](https://github.com/whirlwin/claude-code-spotify) mod puts the
 song after the spinner's word. In the terminal the article takes the place
@@ -124,7 +110,7 @@ node docs/preview.mjs docs/preview.png
 The preview script needs Node 22.18 or later, to import `hooks/logo.ts`
 without a compile step.
 
-The plugin is named `vg` rather than after the repository because Claude Code
+The plugin is named `vg` rather than `claude-vg` because Claude Code
 reserves plugin names starting with `claude-`. It is not affiliated with VG or
 Schibsted.
 

@@ -1,6 +1,0 @@
-{
-  "name": "claude-code-halloween",
-  "description": "Halloween mods for Claude Code",
-  "owner": { "name": "whirlwin" },
-  "plugins": [{ "name": "halloween", "source": "./" }]
-}

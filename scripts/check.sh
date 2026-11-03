@@ -32,6 +32,17 @@ for name in $names; do
     grep -o '<code class="cmd__text">.*</code>' | sed -E 's/<[^>]+>//g')
   [ "$got" = "$cmd" ] || problem "card #$name copies \"$got\", not \"$cmd\""
 done
+# Every entry installs from its folder in this repo, so that folder must hold
+# a plugin of the same name.
+for name in $names; do
+  path=$(jq -r --arg n "$name" '.plugins[] | select(.name == $n) | .source.path // empty' "$catalog")
+  manifest="$root/$path/.claude-plugin/plugin.json"
+  if [ -z "$path" ] || [ ! -f "$manifest" ]; then
+    problem "catalog entry \"$name\" has no plugin at \"$path\""
+  elif [ "$(jq -r .name "$manifest")" != "$name" ]; then
+    problem "$path/.claude-plugin/plugin.json is named \"$(jq -r .name "$manifest")\", not \"$name\""
+  fi
+done
 cards=$(grep -Eo '<article class="card theme[^"]*" id="[^"]+"' "$page" | sed -E 's/.*id="([^"]+)"/\1/')
 for card in $cards; do
   grep -qx "$card" <<<"$names" ||
