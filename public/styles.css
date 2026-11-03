@@ -297,6 +297,11 @@ main {
   --accent-text: #ff7518;
   --accent-bar: linear-gradient(90deg, #ff7518 0 45%, #8e4fd6);
 }
+.theme--christmas {
+  --accent: #d42426;
+  --accent-text: #ff6b6b;
+  --accent-bar: linear-gradient(90deg, #d42426 0 45%, #2e9e4f);
+}
 .theme--hackernews {
   --accent: #ff6600;
   --accent-text: #ff6600;

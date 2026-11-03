@@ -1,0 +1,8 @@
+{
+  "name": "christmas",
+  "version": "0.1.0",
+  "description": "A festive Clawd in the spinner: Santa, elf, reindeer, snowman and tree, cycling with Christmas effects",
+  "author": { "name": "whirlwin" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
