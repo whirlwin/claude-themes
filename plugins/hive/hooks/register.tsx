@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Agent, Check, Hive, Repo, Snapshot } from '../types'
+import type { Agent, Check, Hive, Hub, Repo, Snapshot } from '../types'
 
 const PANE = 'hive'
 const TITLE = 'hives'
@@ -11,7 +11,7 @@ const HIVE_IMAGE = 'hivecommons/hive'
 // The podman Homebrew installs, for a session whose PATH lacks it.
 const PODMAN = ['podman', '/opt/homebrew/bin/podman', '/usr/local/bin/podman']
 
-const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-1' })
+const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-2' })
 
 // Each hive container's dashboard token, read from its environment. Kept in
 // memory only, never in $.state; a reload reads it again.
@@ -50,20 +50,27 @@ async function podman($: EngineInterface, args: string[]): Promise<string> {
   throw new Error(last)
 }
 
-// Every hive container with the host port of the gateway in its compose project.
-export function discover(containers: Container[]): Found[] {
+// Every hive container with the host port of the gateway in its compose
+// project, and apart from them every hub, which publishes its own port.
+export function discover(containers: Container[]): { hives: Found[]; hubs: Found[] } {
   const project = (c: Container) => c.Labels?.['com.docker.compose.project'] ?? ''
   const service = (c: Container) => c.Labels?.['com.docker.compose.service'] ?? ''
-  return containers
-    .filter(c => str(c.Image).includes(HIVE_IMAGE) && service(c) !== 'gateway')
-    .map(c => {
-      const gateway = containers.find(
-        g => service(g) === 'gateway' && project(g) === project(c) && g.State === 'running',
-      )
-      const port = gateway?.Ports?.find(p => p.container_port === 3001)?.host_port ?? null
-      return { container: c.Names?.[0] ?? '?', running: c.State === 'running', port }
-    })
-    .sort((a, b) => a.container.localeCompare(b.container))
+  const ours = containers.filter(c => str(c.Image).includes(HIVE_IMAGE))
+  const found = (c: Container, port: number | null): Found => ({ container: c.Names?.[0] ?? '?', running: c.State === 'running', port })
+  const byName = (a: Found, b: Found) => a.container.localeCompare(b.container)
+  return {
+    hubs: ours
+      .filter(c => service(c) === 'hub')
+      .map(c => found(c, c.Ports?.find(p => p.container_port === 3001)?.host_port ?? null))
+      .sort(byName),
+    hives: ours
+      .filter(c => service(c) !== 'gateway' && service(c) !== 'hub')
+      .map(c => {
+        const gateway = containers.find(g => service(g) === 'gateway' && project(g) === project(c) && g.State === 'running')
+        return found(c, gateway?.Ports?.find(p => p.container_port === 3001)?.host_port ?? null)
+      })
+      .sort(byName),
+  }
 }
 
 async function token($: EngineInterface, container: string): Promise<string | null> {
@@ -138,12 +145,30 @@ async function pollHive($: EngineInterface, found: Found): Promise<Hive> {
   }
 }
 
+// The registry answers anonymously with only the public hives, and a bearer
+// token does not widen it, so a count shows only when the list is not empty.
+async function pollHub($: EngineInterface, found: Found): Promise<Hub> {
+  const { container, running, port } = found
+  const hub = (error: string | null, hives: number | null = null): Hub => ({ container, port, error, hives })
+  if (!running) return hub('container stopped')
+  if (port === null) return hub('no published port')
+  try {
+    const r = await $.http.fetch(`http://127.0.0.1:${port}/api/registry`)
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const list = (JSON.parse(r.text) as Raw).hives
+    return hub(null, Array.isArray(list) && list.length > 0 ? list.length : null)
+  } catch (err) {
+    return hub(err instanceof Error ? err.message : String(err))
+  }
+}
+
 const label = (hv: Hive) => hv.hiveId.replace(/^hive-/, '')
 
 // Toasts each problem once and keeps the status line on the ones still open.
 async function alert($: EngineInterface, snap: Snapshot): Promise<void> {
   const now = new Map<string, string>()
   if (snap.error) now.set('discover', `hives: ${snap.error}`)
+  for (const hb of snap.hubs) if (hb.error) now.set(`${hb.container} down`, `${hb.container}: ${hb.error}`)
   for (const hv of snap.hives) {
     if (hv.error) now.set(`${hv.container} down`, `${label(hv)}: ${hv.error}`)
     for (const c of hv.checks.filter(c => c.status === 'fail')) now.set(`${hv.container} ${c.name}`, `${label(hv)} ${c.name} failing`)
@@ -160,10 +185,14 @@ async function poll($: EngineInterface): Promise<void> {
   let next: Snapshot
   try {
     const found = discover(JSON.parse(await podman($, ['ps', '-a', '--format', 'json'])) as Container[])
-    next = { at, error: null, hives: await Promise.all(found.map(f => pollHive($, f))) }
+    const [hives, hubs] = await Promise.all([
+      Promise.all(found.hives.map(f => pollHive($, f))),
+      Promise.all(found.hubs.map(f => pollHub($, f))),
+    ])
+    next = { at, error: null, hives, hubs }
   } catch (err) {
     const prev = await read($, snapshot)
-    next = { at, error: err instanceof Error ? err.message : String(err), hives: prev?.hives ?? [] }
+    next = { at, error: err instanceof Error ? err.message : String(err), hives: prev?.hives ?? [], hubs: prev?.hubs ?? [] }
   }
   await alert($, next)
   await update($, snapshot, () => next)
@@ -182,6 +211,19 @@ const dot = (hv: Hive) =>
   hv.error ? "red" : hv.health === "ok" ? "green" : hv.health === "starting" || hv.health === "unknown" ? undefined : "yellow"
 
 type Ui = Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Text'>
+
+// The hub's line: ◆ hub · 2 hives · :3021, the port in the pane only.
+function hubLine({ Text }: Ui, hb: Hub, long: boolean) {
+  const port = long && hb.port ? <Text dimColor> · :{hb.port}</Text> : null
+  return (
+    <Text wrap="truncate-end">
+      <Text color={hb.error ? 'red' : 'green'}>◆</Text> <Text bold>hub</Text>
+      {hb.error ? <Text color="red"> {hb.error}</Text> : <Text dimColor> · </Text>}
+      {hb.error ? null : hb.hives === null ? 'up' : `${hb.hives} ${hb.hives === 1 ? 'hive' : 'hives'}`}
+      {port}
+    </Text>
+  )
+}
 
 // One line per hive: ● name health · governor · agents up/total · issues/PRs · budget.
 function line({ Text }: Ui, hv: Hive, long: boolean) {
@@ -247,7 +289,8 @@ function pane(ui: Ui, snap: Snapshot) {
   const { Box, Text } = ui
   return (
     <Box flexDirection="column">
-      {snap.hives.length === 0 ? <Text dimColor>No hive containers in podman.</Text> : null}
+      {snap.hives.length === 0 && snap.hubs.length === 0 ? <Text dimColor>No hive containers in podman.</Text> : null}
+      {snap.hubs.map(hb => hubLine(ui, hb, true))}
       {snap.hives.map(hv => (
         <Box flexDirection="column">
           {line(ui, hv, true)}
@@ -304,11 +347,12 @@ export const register: Register = on => {
   // The engine's spinner line, with one short line per hive under it.
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const snap = await read($, snapshot)
-    if (!snap || snap.hives.length === 0) return next(e)
+    if (!snap || snap.hives.length + snap.hubs.length === 0) return next(e)
     const ui = $.ui.resolve(e)
     return (
       <ui.Box flexDirection="column">
         {await next(e)}
+        {snap.hubs.map(hb => hubLine(ui, hb, false))}
         {snap.hives.map(hv => line(ui, hv, false))}
       </ui.Box>
     )

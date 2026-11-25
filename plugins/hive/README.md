@@ -22,6 +22,12 @@ A toast and a status line entry say when a hive stops answering, a health
 check fails or a budget runs out. Each toasts once until it clears. Warnings
 show in the pane only.
 
+A local hub (a container with the compose service `hub`) is found too and
+shown as the first line, `◆ hub · 2 hives · :3021` (the port in the pane
+only). Its registry lists only public hives without a login, so the count
+shows when it lists any, otherwise the line says `◆ hub · up`. A hub that
+stops answering toasts like a hive.
+
 ## How it finds hives
 
 It asks podman every 15 seconds. A hive is any container from the

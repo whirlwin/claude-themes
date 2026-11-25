@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A compact pane and spinner lines for every local Hive Commons hive found in podman: health, governor, agents, repos, budget",
   "author": {
     "name": "whirlwin"

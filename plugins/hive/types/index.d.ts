@@ -1,4 +1,4 @@
-// One poll of every hive found in podman. Numbers are null when the hive
+// One poll of every hive and hub found in podman. Numbers are null when the hive
 // did not report them.
 export type Agent = { name: string; emoji: string; state: string; busy: string; paused: boolean; enabled: boolean }
 export type Check = { name: string; status: string; detail: string }
@@ -19,7 +19,13 @@ export type Hive = {
   agents: Agent[]
   repos: Repo[]
 }
-export type Snapshot = { at: number; error: string | null; hives: Hive[] }
+export type Hub = {
+  container: string
+  port: number | null // the port the hub publishes on the host
+  error: string | null // not running, no port, or did not answer
+  hives: number | null // hives in its registry; null when it listed none
+}
+export type Snapshot = { at: number; error: string | null; hives: Hive[]; hubs: Hub[] }
 
 declare module 'claude-code' {
   interface PluginState {

@@ -7,7 +7,7 @@ const label = (project: string, service: string) => ({
   'com.docker.compose.project': project,
   'com.docker.compose.service': service,
 })
-// Trimmed from real `podman ps -a --format json`: two hives with gateways, one stopped hive.
+// Trimmed from real `podman ps -a --format json`: two hives with gateways, one stopped hive, a hub.
 const PS = [
   { Names: ['hive'], Image: 'ghcr.io/hivecommons/hive:stable', State: 'running', Ports: null, Labels: label('src', 'hive') },
   { Names: ['hive-gateway'], Image: 'docker.io/library/nginx', State: 'running', Labels: label('src', 'gateway'),
@@ -16,6 +16,8 @@ const PS = [
   { Names: ['hive-acme-gateway'], Image: 'docker.io/library/nginx', State: 'running', Labels: label('hive-acme', 'gateway'),
     Ports: [{ host_ip: '127.0.0.1', container_port: 3001, host_port: 3011 }] },
   { Names: ['hive-old'], Image: 'ghcr.io/hivecommons/hive:stable', State: 'exited', Ports: null, Labels: label('old', 'hive') },
+  { Names: ['hive-hub'], Image: 'ghcr.io/hivecommons/hive:stable', State: 'running', Labels: label('hive-hub', 'hub'),
+    Ports: [{ host_ip: '127.0.0.1', container_port: 3001, host_port: 3021 }] },
   { Names: ['kind-control-plane'], Image: 'kindest/node', State: 'running', Ports: null, Labels: {} },
 ]
 const status = (hiveId: string, health: string, repo: string, issues: number, prs: number) => ({
@@ -48,7 +50,8 @@ function engine(on: On, answers: Record<string, number> = {}) {
     const port = /:(\d+)\//.exec(e.url)?.[1] ?? ''
     seen.auth.set(port, (e.init?.headers as Record<string, string> | undefined)?.Authorization)
     const code = answers[port] ?? 200
-    return { value: { status: code, ok: code < 300, headers: {}, text: JSON.stringify(STATUS[port] ?? {}) } }
+    const body = e.url.endsWith('/api/registry') ? { hives: [{ id: 'hive-acme-web' }, { id: 'hive-acme-main' }], updatedAt: 'now' } : STATUS[port]
+    return { value: { status: code, ok: code < 300, headers: {}, text: JSON.stringify(body ?? {}) } }
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', (_, e) => { seen.toasts.push((e as { text: string }).text); return { value: undefined } })
@@ -90,6 +93,10 @@ test('finds every hive in podman and asks each with its own token', async ($, on
   expect(text).toContain('+1 off')
   expect(text).toMatch(/old container stopped/)
   expect(text).not.toContain('kind')
+  expect(text).not.toContain('no gateway port')
+  expect(text).toContain('◆ hub')
+  expect(seen.auth.has('3021')).toBe(true)
+  expect(seen.auth.get('3021')).toBeUndefined()
   expect(text).not.toContain('tok-')
 })
 
@@ -103,6 +110,33 @@ test('the spinner keeps the engine line and adds one line per hive', async ($, o
   expect(text).toContain('Baking…')
   expect(text).toContain('acme-main warning · surge · 1/2 · 3i 35p · 65%')
   expect(text).toContain('acme-web · idle · 1/2 · 1i 0p · 65%')
+  expect(text).toContain('◆ hub · 2 hives')
+  expect(text).not.toContain(':3021')
+  expect(text.indexOf('◆ hub')).toBeLessThan(text.indexOf('acme-main'))
+})
+
+test('the pane lists the hub first with its port and not as a hive', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  engine(on)
+  await start($)
+  await clock.advance(100)
+  const ui = await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })
+  const text = shown(await ui.drawn())
+  expect(text).toContain('◆ hub · 2 hives · :3021')
+  expect(text.indexOf('◆ hub')).toBeLessThan(text.indexOf('acme-main'))
+  expect(text.match(/hub/g)).toHaveLength(1)
+})
+
+test('a hub that stops answering toasts once', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const answers: Record<string, number> = {}
+  const seen = engine(on, answers)
+  await start($)
+  await clock.advance(100)
+  answers[3021] = 502
+  await clock.advance(15_000)
+  await clock.advance(15_000)
+  expect(seen.toasts.filter(t => t.includes('hive-hub'))).toEqual(['hive-hub: HTTP 502'])
 })
 
 test('a hive that stops answering toasts once', async ($, on) => {
