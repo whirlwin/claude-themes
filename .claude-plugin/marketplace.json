@@ -78,6 +78,25 @@
         "url": "https://github.com/whirlwin/claude-themes.git",
         "path": "plugins/vg"
       }
+    },
+    {
+      "name": "hive",
+      "description": "Every local Hive Commons hive in the spinner: one line each with health, governor, agents, issues, PRs and budget, found in podman",
+      "homepage": "https://github.com/whirlwin/claude-themes/tree/main/plugins/hive",
+      "license": "MIT",
+      "category": "developer-tools",
+      "tags": [
+        "spinner",
+        "theme",
+        "hive",
+        "agents",
+        "podman"
+      ],
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/whirlwin/claude-themes.git",
+        "path": "plugins/hive"
+      }
     }
   ]
 }

@@ -310,6 +310,10 @@ main {
   --accent: #dd1f02;
   --accent-text: #ff5a3d;
 }
+.theme--hive {
+  --accent: #f5b301;
+  --accent-text: #f5b301;
+}
 
 .theme__name {
   margin: 0 0 0 0.5rem;

@@ -13,6 +13,7 @@ them and the page that shows them.
 | Christmas | `christmas` | [plugins/christmas](plugins/christmas) |
 | Hacker News | `hackernews` | [plugins/hackernews](plugins/hackernews) |
 | VG | `vg` | [plugins/vg](plugins/vg) |
+| Hive | `hive` | [plugins/hive](plugins/hive) |
 
 Install a theme in a Claude Code session:
 
