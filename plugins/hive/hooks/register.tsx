@@ -11,7 +11,7 @@ const HIVE_IMAGE = 'hivecommons/hive'
 // The podman Homebrew installs, for a session whose PATH lacks it.
 const PODMAN = ['podman', '/opt/homebrew/bin/podman', '/usr/local/bin/podman']
 
-const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-2' })
+const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-3' })
 
 // Each hive container's dashboard token, read from its environment. Kept in
 // memory only, never in $.state; a reload reads it again.
@@ -86,6 +86,7 @@ function empty(container: string, port: number | null, error: string | null): Hi
   return {
     container, port, error, hiveId: names.get(container) ?? container, health: 'unknown', checks: [], governor: '?', nextKickAt: null,
     budgetPct: null, burnHourly: null, ghRemaining: null, weekUSD: null, agents: [], repos: [],
+    hub: null, heartbeat: null, heartbeatDetail: '',
   }
 }
 
@@ -123,13 +124,46 @@ export function parse(s: Raw, container: string, port: number | null): Hive {
   }
 }
 
-async function pollHive($: EngineInterface, found: Found): Promise<Hive> {
+// Hosts a hive's hub_url can name for a hub running on this machine.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', 'host.containers.internal', 'host.docker.internal'])
+
+// A hive's authenticated GET as JSON; null when it fails, so a hive without
+// hub info is still a hive.
+async function getJson($: EngineInterface, url: string, headers: Record<string, string> | undefined): Promise<Raw | null> {
+  try {
+    const r = await $.http.fetch(url, headers ? { headers } : undefined)
+    return r.ok ? (JSON.parse(r.text) as Raw) : null
+  } catch {
+    return null
+  }
+}
+
+// The local hub a hive reports to: its heartbeat check exists and hub_url
+// points at a local alias on the hub's published port.
+export function membership(config: Raw | null, deep: Raw | null, hubs: Found[]): Pick<Hive, 'hub' | 'heartbeat' | 'heartbeatDetail'> {
+  const none = { hub: null, heartbeat: null, heartbeatDetail: '' }
+  const beat = deep?.checks?.hub_heartbeat
+  if (!beat || typeof beat !== 'object') return none
+  const m = /^https?:\/\/([^/:?#]+)(?::(\d+))?/i.exec(str(config?.hub_url))
+  if (!m || !LOCAL_HOSTS.has((m[1] ?? '').toLowerCase())) return none
+  const hub = hubs.find(hb => hb.port !== null && String(hb.port) === m[2])
+  if (!hub) return none
+  return { hub: hub.container, heartbeat: beat.status === 'pass' ? 'pass' : 'warn', heartbeatDetail: str(beat.detail) }
+}
+
+async function pollHive($: EngineInterface, found: Found, hubs: Found[]): Promise<Hive> {
   const { container, running, port } = found
   if (!running) return empty(container, port, 'container stopped')
   if (port === null) return empty(container, null, 'no gateway port')
   try {
     const t = await token($, container)
-    const r = await $.http.fetch(`http://127.0.0.1:${port}/api/status`, t ? { headers: { Authorization: `Bearer ${t}` } } : undefined)
+    const headers = t ? { Authorization: `Bearer ${t}` } : undefined
+    const base = `http://127.0.0.1:${port}`
+    const [r, config, deep] = await Promise.all([
+      $.http.fetch(`${base}/api/status`, headers ? { headers } : undefined),
+      getJson($, `${base}/api/config`, headers),
+      getJson($, `${base}/api/health/deep`, headers),
+    ])
     if (r.status === 401) tokens.delete(container) // re-read on the next poll
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     const s = JSON.parse(r.text) as Raw
@@ -137,7 +171,7 @@ async function pollHive($: EngineInterface, found: Found): Promise<Hive> {
     if (s.status === 'initializing') {
       return { ...empty(container, port, null), health: 'starting', governor: str(s.startupPhaseLabel) || 'starting' }
     }
-    const hive = parse(s, container, port)
+    const hive = { ...parse(s, container, port), ...membership(config, deep, hubs) }
     names.set(container, hive.hiveId)
     return hive
   } catch (err) {
@@ -145,18 +179,18 @@ async function pollHive($: EngineInterface, found: Found): Promise<Hive> {
   }
 }
 
-// The registry answers anonymously with only the public hives, and a bearer
-// token does not widen it, so a count shows only when the list is not empty.
+// The registry only says whether the hub is up: it answers anonymously with
+// the public hives alone, so the hub's hives are counted from the hives that
+// report to it instead.
 async function pollHub($: EngineInterface, found: Found): Promise<Hub> {
   const { container, running, port } = found
-  const hub = (error: string | null, hives: number | null = null): Hub => ({ container, port, error, hives })
+  const hub = (error: string | null): Hub => ({ container, port, error })
   if (!running) return hub('container stopped')
   if (port === null) return hub('no published port')
   try {
     const r = await $.http.fetch(`http://127.0.0.1:${port}/api/registry`)
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    const list = (JSON.parse(r.text) as Raw).hives
-    return hub(null, Array.isArray(list) && list.length > 0 ? list.length : null)
+    return hub(null)
   } catch (err) {
     return hub(err instanceof Error ? err.message : String(err))
   }
@@ -173,6 +207,7 @@ async function alert($: EngineInterface, snap: Snapshot): Promise<void> {
     if (hv.error) now.set(`${hv.container} down`, `${label(hv)}: ${hv.error}`)
     for (const c of hv.checks.filter(c => c.status === 'fail')) now.set(`${hv.container} ${c.name}`, `${label(hv)} ${c.name} failing`)
     if (hv.budgetPct !== null && hv.budgetPct >= 100) now.set(`${hv.container} budget`, `${label(hv)} budget exhausted`)
+    if (hv.hub && hv.heartbeat === 'warn') now.set(`${hv.container} heartbeat`, `${label(hv)} heartbeat to ${hv.hub} not accepted`)
   }
   for (const [key, text] of now) if (!alerting.has(key)) void $.ui.toast(text)
   alerting.clear()
@@ -186,7 +221,7 @@ async function poll($: EngineInterface): Promise<void> {
   try {
     const found = discover(JSON.parse(await podman($, ['ps', '-a', '--format', 'json'])) as Container[])
     const [hives, hubs] = await Promise.all([
-      Promise.all(found.hives.map(f => pollHive($, f))),
+      Promise.all(found.hives.map(f => pollHive($, f, found.hubs))),
       Promise.all(found.hubs.map(f => pollHub($, f))),
     ])
     next = { at, error: null, hives, hubs }
@@ -206,31 +241,34 @@ function compact(n: number): string {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(Math.round(n))
 }
 
+const truncate = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t)
 const level = (pct: number) => (pct >= 90 ? 'red' : pct >= 75 ? 'yellow' : 'green')
 const dot = (hv: Hive) =>
   hv.error ? "red" : hv.health === "ok" ? "green" : hv.health === "starting" || hv.health === "unknown" ? undefined : "yellow"
 
 type Ui = Pick<ReturnType<EngineInterface['ui']['resolve']>, 'Box' | 'Text'>
 
-// The hub's line: ◆ hub · 2 hives · :3021, the port in the pane only.
-function hubLine({ Text }: Ui, hb: Hub, long: boolean) {
+// The hub's line: ◆ hub · 2 hives · :3021, the port in the pane only. The
+// count is the hives listed under it.
+function hubLine({ Text }: Ui, hb: Hub, children: number, long: boolean) {
   const port = long && hb.port ? <Text dimColor> · :{hb.port}</Text> : null
   return (
     <Text wrap="truncate-end">
       <Text color={hb.error ? 'red' : 'green'}>◆</Text> <Text bold>hub</Text>
       {hb.error ? <Text color="red"> {hb.error}</Text> : <Text dimColor> · </Text>}
-      {hb.error ? null : hb.hives === null ? 'up' : `${hb.hives} ${hb.hives === 1 ? 'hive' : 'hives'}`}
+      {hb.error ? null : children === 0 ? 'no hives' : `${children} ${children === 1 ? 'hive' : 'hives'}`}
       {port}
     </Text>
   )
 }
 
 // One line per hive: ● name health · governor · agents up/total · issues/PRs · budget.
-function line({ Text }: Ui, hv: Hive, long: boolean) {
+function line({ Text }: Ui, hv: Hive, long: boolean, nested: boolean) {
+  const pad = nested ? '  ' : ''
   if (hv.error) {
     return (
       <Text wrap="truncate-end">
-        <Text color="red">●</Text> <Text bold>{label(hv)}</Text> <Text color="red">{hv.error}</Text>
+        {pad}<Text color="red">●</Text> <Text bold>{label(hv)}</Text> <Text color="red">{hv.error}</Text>
         {long && hv.port ? <Text dimColor> :{hv.port}</Text> : null}
       </Text>
     )
@@ -241,7 +279,7 @@ function line({ Text }: Ui, hv: Hive, long: boolean) {
   const prs = hv.repos.reduce((n, r) => n + r.prs, 0)
   return (
     <Text wrap="truncate-end">
-      <Text color={dot(hv)}>●</Text> <Text bold>{label(hv)}</Text>
+      {pad}<Text color={dot(hv)}>●</Text> <Text bold>{label(hv)}</Text>
       {hv.health !== 'ok' ? <Text color={dot(hv)}> {hv.health}</Text> : null}
       <Text dimColor> · </Text>{hv.governor}
       {long && hv.nextKickAt ? <Text dimColor> {clock(hv.nextKickAt)}</Text> : null}
@@ -255,18 +293,21 @@ function line({ Text }: Ui, hv: Hive, long: boolean) {
       ) : null}
       {long && hv.weekUSD ? <Text dimColor> · ${hv.weekUSD.toFixed(2)}/wk</Text> : null}
       {long && hv.port ? <Text dimColor> · :{hv.port}</Text> : null}
+      {nested && hv.heartbeat === 'warn' ? (
+        <Text color="yellow" dimColor> · hb⚠{long && hv.heartbeatDetail ? ` ${truncate(hv.heartbeatDetail, 40)}` : ''}</Text>
+      ) : null}
     </Text>
   )
 }
 
 // Under the hive's line: the running agents, each repo, and checks not passing.
-function detail({ Text }: Ui, hv: Hive) {
+function detail({ Text }: Ui, hv: Hive, nested: boolean) {
   if (hv.error || hv.health === 'starting') return null
   const on = hv.agents.filter(a => a.state === 'running' || a.paused)
   const off = hv.agents.length - on.length
   return (
     <Text wrap="truncate-end" dimColor>
-      {'  '}
+      {nested ? '    ' : '  '}
       {on.map(a => (
         <Text>
           {a.emoji}<Text color={a.paused ? 'yellow' : a.busy === 'busy' ? 'cyan' : undefined}>{a.name}</Text>{' '}
@@ -285,18 +326,35 @@ function detail({ Text }: Ui, hv: Hive) {
   )
 }
 
+// Each hub with the hives that report to it indented under it, then the
+// hives with no local hub at the top level.
+function tree(ui: Ui, snap: Snapshot, long: boolean) {
+  const { Box } = ui
+  const entry = (hv: Hive, nested: boolean) => (
+    <Box flexDirection="column">
+      {line(ui, hv, long, nested)}
+      {long ? detail(ui, hv, nested) : null}
+    </Box>
+  )
+  const kids = (hb: Hub) => snap.hives.filter(hv => hv.hub === hb.container)
+  const loose = snap.hives.filter(hv => !snap.hubs.some(hb => hb.container === hv.hub))
+  return [
+    ...snap.hubs.map(hb => (
+      <Box flexDirection="column">
+        {hubLine(ui, hb, kids(hb).length, long)}
+        {kids(hb).map(hv => entry(hv, true))}
+      </Box>
+    )),
+    ...loose.map(hv => entry(hv, false)),
+  ]
+}
+
 function pane(ui: Ui, snap: Snapshot) {
   const { Box, Text } = ui
   return (
     <Box flexDirection="column">
       {snap.hives.length === 0 && snap.hubs.length === 0 ? <Text dimColor>No hive containers in podman.</Text> : null}
-      {snap.hubs.map(hb => hubLine(ui, hb, true))}
-      {snap.hives.map(hv => (
-        <Box flexDirection="column">
-          {line(ui, hv, true)}
-          {detail(ui, hv)}
-        </Box>
-      ))}
+      {tree(ui, snap, true)}
       <Text dimColor wrap="truncate-end">
         updated {clock(snap.at)} · every {POLL_MS / 1000}s · i issues, p PRs, ↑ ready, ⏸ held
         {snap.error ? ` · podman: ${snap.error}` : ''}
@@ -344,7 +402,8 @@ export const register: Register = on => {
     return pane(ui, snap)
   })
 
-  // The engine's spinner line, with one short line per hive under it.
+  // The engine's spinner line, with one short line per hive under it, the
+  // hives of a hub indented under its line.
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const snap = await read($, snapshot)
     if (!snap || snap.hives.length + snap.hubs.length === 0) return next(e)
@@ -352,8 +411,7 @@ export const register: Register = on => {
     return (
       <ui.Box flexDirection="column">
         {await next(e)}
-        {snap.hubs.map(hb => hubLine(ui, hb, false))}
-        {snap.hives.map(hv => line(ui, hv, false))}
+        {tree(ui, snap, false)}
       </ui.Box>
     )
   })

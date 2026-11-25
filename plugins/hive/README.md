@@ -22,11 +22,21 @@ A toast and a status line entry say when a hive stops answering, a health
 check fails or a budget runs out. Each toasts once until it clears. Warnings
 show in the pane only.
 
-A local hub (a container with the compose service `hub`) is found too and
-shown as the first line, `◆ hub · 2 hives · :3021` (the port in the pane
-only). Its registry lists only public hives without a login, so the count
-shows when it lists any, otherwise the line says `◆ hub · up`. A hub that
-stops answering toasts like a hive.
+A local hub (a container with the compose service `hub`) is found too. When
+there is one, its line comes first, `◆ hub · 2 hives · :3021` (the port in the
+pane only), and the hives that report to it sit under it, indented by two
+spaces; in the pane each hive's second line moves in with it. Hives with no
+local hub (hub disabled, a remote hub, or no hub running) follow at the top
+level, as they do when there is no hub at all.
+
+The count is the hives listed under the hub, `no hives` when there are none.
+The hub's own registry hides private hives, so it only tells the mod whether
+the hub is up. A hive belongs to a hub when its `/api/health/deep` has a
+`hub_heartbeat` check and the `hub_url` in its `/api/config` names a local
+host (`localhost`, `127.0.0.1`, `host.containers.internal` or
+`host.docker.internal`) and the port the hub publishes. A hive whose heartbeat
+is not accepted gets a dim yellow `hb⚠` on its line (with the reason, if any,
+in the pane) and a toast once. A hub that stops answering toasts like a hive.
 
 ## How it finds hives
 

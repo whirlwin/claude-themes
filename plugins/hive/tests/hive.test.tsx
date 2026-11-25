@@ -36,21 +36,36 @@ const STATUS: Record<string, unknown> = {
   3011: status('hive-acme-main', 'warning', 'api', 3, 35),
 }
 
-function engine(on: On, answers: Record<string, number> = {}) {
+// What each hive reports about its hub: hub_url from /api/config and the
+// hub_heartbeat check from /api/health/deep (absent when the hub is disabled).
+type Link = { hubUrl: string; beat?: Record<string, unknown> }
+const pass = { status: 'pass', last_success: '2026-11-25T12:00:00Z' }
+const links = (): Record<string, Link> => ({
+  3001: { hubUrl: 'http://host.containers.internal:3021', beat: pass },
+  3011: { hubUrl: 'http://host.containers.internal:3021', beat: pass },
+})
+
+function engine(on: On, answers: Record<string, number> = {}, link: Record<string, Link> = links(), ps: unknown[] = PS) {
   const seen = { panes: [] as string[], toasts: [] as string[], auth: new Map<string, string | undefined>() }
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('session.turns', () => ({ value: 0 }))
   on('process.run', (_, e) => {
     const [, sub, name] = e.argv
-    const out = sub === 'ps' ? PS : [`HIVE_DASHBOARD_TOKEN=tok-${name}`, 'PATH=/bin']
+    const out = sub === 'ps' ? ps : [`HIVE_DASHBOARD_TOKEN=tok-${name}`, 'PATH=/bin']
     return { value: { exitCode: 0, stdout: JSON.stringify(out), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('http.fetch', (_, e) => {
     const port = /:(\d+)\//.exec(e.url)?.[1] ?? ''
     seen.auth.set(port, (e.init?.headers as Record<string, string> | undefined)?.Authorization)
     const code = answers[port] ?? 200
-    const body = e.url.endsWith('/api/registry') ? { hives: [{ id: 'hive-acme-web' }, { id: 'hive-acme-main' }], updatedAt: 'now' } : STATUS[port]
+    const body = e.url.endsWith('/api/registry')
+      ? { hives: [], updatedAt: 'now' }
+      : e.url.endsWith('/api/config')
+        ? { hub_url: link[port]?.hubUrl }
+        : e.url.endsWith('/api/health/deep')
+          ? { checks: link[port]?.beat ? { hub_heartbeat: link[port]?.beat } : {} }
+          : STATUS[port]
     return { value: { status: code, ok: code < 300, headers: {}, text: JSON.stringify(body ?? {}) } }
   })
   on('ui.status', () => ({ value: undefined }))
@@ -149,4 +164,85 @@ test('a hive that stops answering toasts once', async ($, on) => {
   await clock.advance(15_000)
   await clock.advance(15_000)
   expect(seen.toasts.filter(t => t.includes('HTTP 502'))).toEqual(['acme-main: HTTP 502'])
+})
+
+test('hives that report to the hub are indented under it, the rest follow unindented', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const link = links()
+  delete link[3011]?.beat // acme-main has its hub disabled
+  engine(on, {}, link)
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('◆ hub · 1 hive')
+  expect(spinner).toContain('  ● acme-web · idle')
+  expect(spinner).toContain('%● acme-main warning') // no indent: it follows the hub group
+  expect(spinner.indexOf('◆ hub')).toBeLessThan(spinner.indexOf('acme-web'))
+  expect(spinner.indexOf('acme-web')).toBeLessThan(spinner.indexOf('acme-main'))
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toContain(':3001    🔍scanner') // nested detail: four spaces
+  expect(pane).toContain(':3011  🔍scanner') // top level detail: two spaces
+})
+
+test('hives under the hub are counted and nested in the spinner and the pane', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  engine(on)
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('◆ hub · 2 hives')
+  expect(spinner).toContain('  ● acme-main warning · surge')
+  expect(spinner).toContain('  ● acme-web · idle')
+  expect(spinner.indexOf('◆ hub')).toBeLessThan(spinner.indexOf('acme-web'))
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toContain('◆ hub · 2 hives · :3021')
+  expect(pane).toContain('  ● acme-web · idle')
+  expect(pane).toContain('    🔍scanner')
+  expect(pane).not.toContain('hb⚠')
+})
+
+test('a hub_url that is remote or on another port is not a local hub', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const link = links()
+  link[3001] = { hubUrl: 'https://hub.example.com:3021', beat: pass }
+  link[3011] = { hubUrl: 'http://localhost:3999', beat: pass }
+  engine(on, {}, link)
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('◆ hub · no hives')
+  expect(spinner).toContain('● acme-web')
+  expect(spinner).not.toContain('  ● acme-web')
+})
+
+test('a hive whose hub does not accept its beat is marked and toasts once', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const link = links()
+  link[3011] = { hubUrl: 'http://host.containers.internal:3021', beat: { status: 'warn', detail: 'hub answered 403' } }
+  const seen = engine(on, {}, link)
+  await start($)
+  await clock.advance(100)
+  await clock.advance(15_000)
+  await clock.advance(15_000)
+  expect(seen.toasts.filter(t => t.includes('heartbeat'))).toEqual(['acme-main heartbeat to hive-hub not accepted'])
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toMatch(/ {2}● acme-main warning · surge.* · hb⚠/)
+  expect(spinner).not.toContain('hub answered 403')
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toContain('hb⚠ hub answered 403')
+})
+
+test('with no hub container the hives stay flat', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  engine(on, {}, links(), PS.filter(c => c.Names[0] !== 'hive-hub'))
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).not.toContain('◆')
+  expect(spinner).toContain('● acme-main warning')
+  expect(spinner).not.toContain('  ● ')
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).not.toContain('◆')
+  expect(pane).not.toContain('  ● ')
+  expect(pane).not.toContain('hb⚠')
 })

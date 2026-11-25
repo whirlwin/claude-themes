@@ -18,12 +18,14 @@ export type Hive = {
   weekUSD: number | null
   agents: Agent[]
   repos: Repo[]
+  hub: string | null // the local hub container this hive reports to
+  heartbeat: 'pass' | 'warn' | null // its last beat to that hub; null without one
+  heartbeatDetail: string // why the beat was not accepted, when it says
 }
 export type Hub = {
   container: string
   port: number | null // the port the hub publishes on the host
   error: string | null // not running, no port, or did not answer
-  hives: number | null // hives in its registry; null when it listed none
 }
 export type Snapshot = { at: number; error: string | null; hives: Hive[]; hubs: Hub[] }
 
