@@ -81,7 +81,7 @@
     },
     {
       "name": "hive",
-      "description": "Every local Hive Commons hive in the spinner: one line each with health, governor, agents, issues, PRs and budget, found in podman",
+      "description": "Every local Hive Commons hive in the spinner, nested under its local hub: one line each with health, governor, agents, issues, PRs and budget, found in podman",
       "homepage": "https://github.com/whirlwin/claude-themes/tree/main/plugins/hive",
       "license": "MIT",
       "category": "developer-tools",

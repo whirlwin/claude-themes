@@ -5,11 +5,12 @@ hive running on your machine. While Claude works, each hive gets one line under
 the spinner: health, governor mode, agents up, open issues and PRs, and how
 much of the token budget is spent.
 
-![One line per hive under the spinner](docs/demo.gif)
+![One line per hive under the spinner, nested under the local hub](docs/demo.gif)
 
 ```
-● acme-main warning · surge · 2/16 1 busy · 6i 78p · 12%
-● acme-web · idle · 1/16 · 1i 0p · 65%
+◆ hub · 2 hives
+  ● acme-main warning · surge · 2/16 1 busy · 6i 78p · 12%
+  ● acme-web · idle · 1/16 · 1i 0p · 65%
 ```
 
 `/hive` opens a pane with two lines per hive: the same line plus the next
