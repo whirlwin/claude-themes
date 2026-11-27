@@ -12,7 +12,11 @@ export type Hive = {
   checks: Check[] // the ones not passing
   governor: string
   nextKickAt: number | null
+  acmm: number | null // the hive's ACMM level; null when it does not report one
+  acmmTarget: number | null // the level its advice aims for
+  acmmAdvise: string // the advice itself, such as stay; '' without one
   budgetPct: number | null
+  budgetOff: boolean // budgets bypassed on the hive, from /api/budget-ignore
   burnHourly: number | null
   ghRemaining: number | null
   weekUSD: number | null

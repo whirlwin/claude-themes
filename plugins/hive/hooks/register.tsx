@@ -11,7 +11,7 @@ const HIVE_IMAGE = 'hivecommons/hive'
 // The podman Homebrew installs, for a session whose PATH lacks it.
 const PODMAN = ['podman', '/opt/homebrew/bin/podman', '/usr/local/bin/podman']
 
-const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-3' })
+const snapshot = atom({ plugin: 'hive', key: 'snapshot' } as const, null, { shape: 'hives-4' })
 
 // Each hive container's dashboard token, read from its environment. Kept in
 // memory only, never in $.state; a reload reads it again.
@@ -85,7 +85,8 @@ async function token($: EngineInterface, container: string): Promise<string | nu
 function empty(container: string, port: number | null, error: string | null): Hive {
   return {
     container, port, error, hiveId: names.get(container) ?? container, health: 'unknown', checks: [], governor: '?', nextKickAt: null,
-    budgetPct: null, burnHourly: null, ghRemaining: null, weekUSD: null, agents: [], repos: [],
+    acmm: null, acmmTarget: null, acmmAdvise: '', budgetPct: null, budgetOff: false, burnHourly: null, ghRemaining: null,
+    weekUSD: null, agents: [], repos: [],
     hub: null, heartbeat: null, heartbeatDetail: '',
   }
 }
@@ -102,6 +103,9 @@ export function parse(s: Raw, container: string, port: number | null): Hive {
       .map((c: Raw): Check => ({ name: str(c.name), status: str(c.status), detail: str(c.detail) })),
     governor: str(s.governor?.mode) || '?',
     nextKickAt: kick ? Date.parse(kick) : null,
+    acmm: num(s.acmmLevel) ?? num(s.acmmAdvice?.CurrentLevel),
+    acmmTarget: num(s.acmmAdvice?.TargetLevel),
+    acmmAdvise: str(s.acmmAdvice?.Advise),
     budgetPct: num(b.BUDGET_PCT_USED),
     burnHourly: num(b.BURN_RATE_HOURLY),
     ghRemaining: num(s.ghRateLimits?.core?.remaining),
@@ -159,10 +163,11 @@ async function pollHive($: EngineInterface, found: Found, hubs: Found[]): Promis
     const t = await token($, container)
     const headers = t ? { Authorization: `Bearer ${t}` } : undefined
     const base = `http://127.0.0.1:${port}`
-    const [r, config, deep] = await Promise.all([
+    const [r, config, deep, ignore] = await Promise.all([
       $.http.fetch(`${base}/api/status`, headers ? { headers } : undefined),
       getJson($, `${base}/api/config`, headers),
       getJson($, `${base}/api/health/deep`, headers),
+      getJson($, `${base}/api/budget-ignore`, headers),
     ])
     if (r.status === 401) tokens.delete(container) // re-read on the next poll
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -171,7 +176,8 @@ async function pollHive($: EngineInterface, found: Found, hubs: Found[]): Promis
     if (s.status === 'initializing') {
       return { ...empty(container, port, null), health: 'starting', governor: str(s.startupPhaseLabel) || 'starting' }
     }
-    const hive = { ...parse(s, container, port), ...membership(config, deep, hubs) }
+    // The budget bypass is global on the hive and not in /api/status.
+    const hive = { ...parse(s, container, port), ...membership(config, deep, hubs), budgetOff: ignore?.ignored === true }
     names.set(container, hive.hiveId)
     return hive
   } catch (err) {
@@ -206,7 +212,7 @@ async function alert($: EngineInterface, snap: Snapshot): Promise<void> {
   for (const hv of snap.hives) {
     if (hv.error) now.set(`${hv.container} down`, `${label(hv)}: ${hv.error}`)
     for (const c of hv.checks.filter(c => c.status === 'fail')) now.set(`${hv.container} ${c.name}`, `${label(hv)} ${c.name} failing`)
-    if (hv.budgetPct !== null && hv.budgetPct >= 100) now.set(`${hv.container} budget`, `${label(hv)} budget exhausted`)
+    if (hv.budgetPct !== null && hv.budgetPct >= 100 && !hv.budgetOff) now.set(`${hv.container} budget`, `${label(hv)} budget exhausted`)
     if (hv.hub && hv.heartbeat === 'warn') now.set(`${hv.container} heartbeat`, `${label(hv)} heartbeat to ${hv.hub} not accepted`)
   }
   for (const [key, text] of now) if (!alerting.has(key)) void $.ui.toast(text)
@@ -262,7 +268,7 @@ function hubLine({ Text }: Ui, hb: Hub, children: number, long: boolean) {
   )
 }
 
-// One line per hive: ● name health · governor · agents up/total · issues/PRs · budget.
+// One line per hive: ● name health · governor · ACMM level · agents up/total · issues/PRs · budget.
 function line({ Text }: Ui, hv: Hive, long: boolean, nested: boolean) {
   const pad = nested ? '  ' : ''
   if (hv.error) {
@@ -283,13 +289,28 @@ function line({ Text }: Ui, hv: Hive, long: boolean, nested: boolean) {
       {hv.health !== 'ok' ? <Text color={dot(hv)}> {hv.health}</Text> : null}
       <Text dimColor> · </Text>{hv.governor}
       {long && hv.nextKickAt ? <Text dimColor> {clock(hv.nextKickAt)}</Text> : null}
+      {hv.acmm !== null ? (
+        <Text>
+          <Text dimColor> · </Text>L{hv.acmm}
+          {long && hv.acmmTarget !== null && hv.acmmTarget !== hv.acmm && hv.acmmAdvise ? (
+            <Text dimColor> → L{hv.acmmTarget} {hv.acmmAdvise}</Text>
+          ) : null}
+        </Text>
+      ) : null}
       <Text dimColor> · </Text>{up}/{hv.agents.length}{busy ? <Text color="cyan"> {busy} busy</Text> : null}
       <Text dimColor> · </Text>{issues}i {prs}p
       {hv.budgetPct !== null ? (
         <Text>
-          <Text dimColor> · </Text><Text color={level(hv.budgetPct)}>{Math.round(hv.budgetPct)}%</Text>
+          <Text dimColor> · </Text>
+          {hv.budgetOff ? (
+            <Text dimColor>{Math.round(hv.budgetPct)}% off</Text>
+          ) : (
+            <Text color={level(hv.budgetPct)}>{Math.round(hv.budgetPct)}%</Text>
+          )}
           {long && hv.burnHourly ? <Text dimColor> {compact(hv.burnHourly)}/h</Text> : null}
         </Text>
+      ) : hv.budgetOff ? (
+        <Text dimColor> · budget off</Text>
       ) : null}
       {long && hv.weekUSD ? <Text dimColor> · ${hv.weekUSD.toFixed(2)}/wk</Text> : null}
       {long && hv.port ? <Text dimColor> · :{hv.port}</Text> : null}

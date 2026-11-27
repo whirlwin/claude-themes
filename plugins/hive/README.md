@@ -9,8 +9,8 @@ much of the token budget is spent.
 
 ```
 ◆ hub · 2 hives
-  ● acme-main warning · surge · 2/16 1 busy · 6i 78p · 12%
-  ● acme-web · idle · 1/16 · 1i 0p · 65%
+  ● acme-main warning · surge · L2 · 2/16 1 busy · 6i 78p · 12%
+  ● acme-web · idle · L2 · 1/16 · 1i 0p · 65%
 ```
 
 `/hive` opens a pane with two lines per hive: the same line plus the next
@@ -18,6 +18,13 @@ governor kick, burn rate, cost this week and port, then the running agents,
 each repo with its issues, PRs, ready (↑) and held (⏸) work, and any health
 check that is not passing. The pane also opens by itself while a conversation
 is still empty, and closes at your next prompt.
+
+`L2` after the governor mode is the hive's ACMM level; a hive that does not
+report one has no such segment. In the pane it also shows the level the hive's
+advice aims for and the advice itself, `L2 → L3 stay`, when that target is
+another level. A hive whose budgets are bypassed (read from its
+`/api/budget-ignore`) shows its budget dim as `63% off`, or `budget off` when
+it reports no budget, and never toasts that its budget ran out.
 
 A toast and a status line entry say when a hive stops answering, a health
 check fails or a budget runs out. Each toasts once until it clears. Warnings

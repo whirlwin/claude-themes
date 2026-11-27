@@ -23,6 +23,8 @@ const PS = [
 const status = (hiveId: string, health: string, repo: string, issues: number, prs: number) => ({
   hiveId,
   governor: { mode: hiveId.endsWith('main') ? 'surge' : 'idle', nextKickAt: '2026-11-25T12:46:07Z' },
+  // Only acme-main reports its ACMM level; acme-web is an older hive.
+  ...(hiveId.endsWith('main') ? { acmmLevel: 2, acmmAdvice: { CurrentLevel: 2, TargetLevel: 3, Advise: 'stay' } } : {}),
   deepHealth: { status: health, checks: health === 'ok' ? [] : [{ name: 'tokens', status: 'warn', detail: 'zero consumed' }] },
   budget: { BUDGET_PCT_USED: 65.2, BURN_RATE_HOURLY: 38852 },
   agents: [
@@ -45,7 +47,11 @@ const links = (): Record<string, Link> => ({
   3011: { hubUrl: 'http://host.containers.internal:3021', beat: pass },
 })
 
-function engine(on: On, answers: Record<string, number> = {}, link: Record<string, Link> = links(), ps: unknown[] = PS) {
+// Each port's /api/budget-ignore answer: a body, or a status code to fail
+// with. A port left out answers 404, like any path the fake does not know.
+type Extra = { status?: Record<string, unknown>; ignore?: Record<string, unknown> }
+
+function engine(on: On, answers: Record<string, number> = {}, link: Record<string, Link> = links(), ps: unknown[] = PS, extra: Extra = {}) {
   const seen = { panes: [] as string[], toasts: [] as string[], auth: new Map<string, string | undefined>() }
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
@@ -58,6 +64,9 @@ function engine(on: On, answers: Record<string, number> = {}, link: Record<strin
   on('http.fetch', (_, e) => {
     const port = /:(\d+)\//.exec(e.url)?.[1] ?? ''
     seen.auth.set(port, (e.init?.headers as Record<string, string> | undefined)?.Authorization)
+    const ignore = extra.ignore?.[port]
+    const fail = (code: number) => ({ value: { status: code, ok: false, headers: {}, text: 'failed' } })
+    if (e.url.endsWith('/api/budget-ignore') && (ignore === undefined || typeof ignore === 'number')) return fail(ignore ?? 404)
     const code = answers[port] ?? 200
     const body = e.url.endsWith('/api/registry')
       ? { hives: [], updatedAt: 'now' }
@@ -65,7 +74,12 @@ function engine(on: On, answers: Record<string, number> = {}, link: Record<strin
         ? { hub_url: link[port]?.hubUrl }
         : e.url.endsWith('/api/health/deep')
           ? { checks: link[port]?.beat ? { hub_heartbeat: link[port]?.beat } : {} }
-          : STATUS[port]
+          : e.url.endsWith('/api/budget-ignore')
+            ? ignore
+            : e.url.endsWith('/api/status')
+              ? (extra.status ?? STATUS)[port]
+              : undefined
+    if (body === undefined && !e.url.endsWith('/api/status')) return fail(404)
     return { value: { status: code, ok: code < 300, headers: {}, text: JSON.stringify(body ?? {}) } }
   })
   on('ui.status', () => ({ value: undefined }))
@@ -123,7 +137,7 @@ test('the spinner keeps the engine line and adds one line per hive', async ($, o
   const ui = await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })
   const text = shown(await ui.drawn())
   expect(text).toContain('Baking…')
-  expect(text).toContain('acme-main warning · surge · 1/2 · 3i 35p · 65%')
+  expect(text).toContain('acme-main warning · surge · L2 · 1/2 · 3i 35p · 65%')
   expect(text).toContain('acme-web · idle · 1/2 · 1i 0p · 65%')
   expect(text).toContain('◆ hub · 2 hives')
   expect(text).not.toContain(':3021')
@@ -245,4 +259,70 @@ test('with no hub container the hives stay flat', async ($, on) => {
   expect(pane).not.toContain('◆')
   expect(pane).not.toContain('  ● ')
   expect(pane).not.toContain('hb⚠')
+})
+
+test('a hive shows its ACMM level, and the pane its target and advice', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  engine(on)
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('acme-main warning · surge · L2 · 1/2')
+  expect(spinner).not.toContain('→')
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toMatch(/acme-main warning · surge \S+ · L2 → L3 stay · 1\/2/)
+})
+
+test('a hive without ACMM fields has no level segment', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  engine(on)
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('acme-web · idle · 1/2 · 1i 0p · 65%')
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toMatch(/acme-web · idle \S+ · 1\/2/)
+})
+
+const spent = (): Record<string, unknown> => ({
+  ...STATUS,
+  3011: { ...(STATUS[3011] as object), budget: { BUDGET_PCT_USED: 104.4, BURN_RATE_HOURLY: 38852 } },
+})
+
+test('a bypassed budget shows dim as off and raises no exhausted toast', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const seen = engine(on, {}, links(), PS, { status: spent(), ignore: { 3011: { ignored: true, agents: [], by_agent: {} } } })
+  await start($)
+  await clock.advance(100)
+  await clock.advance(15_000)
+  expect(seen.toasts.filter(t => t.includes('budget'))).toEqual([])
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('acme-main warning · surge · L2 · 1/2 · 3i 35p · 104% off')
+  expect(spinner).toContain('acme-web · idle · 1/2 · 1i 0p · 65%')
+  expect(spinner).not.toContain('65% off')
+  const pane = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Pane', requestId: 'hive', props: {} as never })).drawn())
+  expect(pane).toContain('104% off 39k/h')
+})
+
+test('a bypassed budget the hive does not report shows as budget off', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const status = { ...STATUS, 3011: { ...(STATUS[3011] as object), budget: {} } }
+  engine(on, {}, links(), PS, { status, ignore: { 3011: { ignored: true } } })
+  await start($)
+  await clock.advance(100)
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('3i 35p · budget off')
+})
+
+test('a failing budget-ignore endpoint leaves the hive as it was', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_800_000_000_000 })
+  const seen = engine(on, {}, links(), PS, { status: spent(), ignore: { 3011: 500 } })
+  await start($)
+  await clock.advance(100)
+  expect(seen.toasts).toContain('acme-main budget exhausted')
+  expect(seen.toasts.filter(t => t.includes('HTTP'))).toEqual([])
+  const spinner = shown(await (await $.ui.mount({ plugin: 'hive', surface: 'terminal', component: 'Spinner', requestId: 'main', props: SPINNER })).drawn())
+  expect(spinner).toContain('acme-main warning · surge · L2 · 1/2 · 3i 35p · 104%')
+  expect(spinner).not.toContain('off')
+  expect(spinner).not.toContain('HTTP 500')
 })
